@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: voting-system
+    env: node
+    region: singapore
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "node voting.js"
+    envVars:
+      - key: NODE_VERSION
+        value: 18
