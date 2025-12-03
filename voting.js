@@ -248,7 +248,7 @@ app.get("/admin-login", (req, res) => {
   res.send(
     style() +
       `
-<h2>Admin Login</h2>
+<h2>Admin Login </h2>
 <form method="POST" action="/checkAdmin">
   Email:<input type="text" name="email">
   Password:<input type="password" name="password">
