@@ -2,6 +2,8 @@ const express = require("express");
 const mysql = require("mysql2");
 const session = require("express-session");
 const bodyParser = require("body-parser");
+require("dotenv").config();
+
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -111,20 +113,26 @@ a { color:white; font-weight:600; }
 
 // ---------------- MYSQL CONNECTION ----------------
 // Use host.docker.internal when running inside Docker
+// ---------------- MYSQL CONNECTION ----------------
 const db = mysql.createConnection({
-  host: "host.docker.internal",
-  user: "root",
-  password: "Rock@2005",
-  database: "voting_db",
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+  database: process.env.DB_NAME,
+  ssl: {
+    rejectUnauthorized: true
+  }
 });
 
 db.connect((err) => {
   if (err) {
-    console.log("DB Error:", err);
+    console.error("❌ MySQL connection failed:", err);
     process.exit(1);
   }
-  console.log("MySQL Connected");
+  console.log("✅ Connected to Aiven MySQL");
 });
+
 
 // ---------------- TABLES ----------------
 db.query(`
