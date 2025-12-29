@@ -4,8 +4,10 @@ services:
     env: node
     region: singapore
     plan: free
-    buildCommand: "npm install"
-    startCommand: "node voting.js"
+
+    buildCommand: npm install
+    startCommand: node voting.js
+
     envVars:
       - key: NODE_VERSION
         value: 18

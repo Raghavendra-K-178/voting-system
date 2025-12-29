@@ -3,17 +3,32 @@ const express = require("express");
 const mysql = require("mysql2");
 const session = require("express-session");
 const bodyParser = require("body-parser");
-require("dotenv").config();
+const bcrypt = require("bcryptjs");
+const helmet = require("helmet");
+if (!process.env.KUBERNETES_SERVICE_HOST) {
+  require("dotenv").config();
+}
 
 const app = express();
+app.use(helmet());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// ---------------- REDIS (Session store) ----------------
+const Redis = require("redis");
+const RedisStore = require("connect-redis")(session);
+const redisUrl = process.env.REDIS_URL || "redis://redis-master:6379";
+const redisClient = Redis.createClient({ url: redisUrl });
+redisClient.on("error", (err) => console.error("❌ Redis client error:", err));
+redisClient.connect().then(() => console.log("✅ Connected to Redis")).catch((err) => console.error("❌ Redis connection failed:", err));
 
 // ---------------- SESSION ----------------
 app.use(
   session({
-    secret: "voting_secret_key",
+    store: new RedisStore({ client: redisClient }),
+    secret: process.env.SESSION_SECRET || "change_this_secret",
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }, // 1 day
   })
 );
 
@@ -169,22 +184,21 @@ function endHtml() {
 </html>`;
 }
 
-// ---------------- MYSQL CONNECTION (AIVEN via ENV) ----------------
+// ---------------- MYSQL CONNECTION () ----------------
 const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  ssl: { rejectUnauthorized: false },
+  host: process.env.DB_HOST,     // mysql-service
+  port: process.env.DB_PORT,     // 3306
+  user: process.env.DB_USER,     // root
+  password: process.env.DB_PASS,// Rock@2005
+  database: process.env.DB_NAME // voting_db
 });
 
 db.connect((err) => {
   if (err) {
-    console.error("❌ MySQL connection failed:", err);
+    console.error("❌ MySQL connection failed:", err.message);
     process.exit(1);
   }
-  console.log("✅ Connected to Aiven MySQL");
+  console.log("✅ Connected to MySQL");
 });
 
 // ---------------- TABLE SETUP ----------------
@@ -206,10 +220,15 @@ CREATE TABLE IF NOT EXISTS candidates(
   votes INT DEFAULT 0
 )`);
 
-db.query(`
-INSERT IGNORE INTO users (id,name,email,password,role,voted)
-VALUES (1,'Admin','admin@college.com','admin123','admin',0)
-`);
+const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+const adminHash = bcrypt.hashSync(adminPassword, 10);
+db.query(
+  "INSERT IGNORE INTO users (id,name,email,password,role,voted) VALUES (1,?,?,?, 'admin', 0)",
+  ['Admin', 'admin@college.com', adminHash],
+  (err) => {
+    if (err) console.log("Admin insert error:", err);
+  }
+);
 
 // ---------------- MIDDLEWARE ----------------
 function requireLogin(req, res, next) {
@@ -235,6 +254,8 @@ function requireAdmin(req, res, next) {
   }
   next();
 }
+
+
 
 // ---------------- HOME ----------------
 app.get("/", (req, res) => {
@@ -294,8 +315,8 @@ app.get("/login", (req, res) => {
 app.post("/checkLogin", (req, res) => {
   const { email, password } = req.body;
   db.query(
-    "SELECT * FROM users WHERE email=? AND password=? AND role='student'",
-    [email, password],
+    "SELECT * FROM users WHERE email=? AND role='student'",
+    [email],
     (err, rows) => {
       if (err || rows.length === 0) {
         return res.send(
@@ -312,7 +333,24 @@ app.post("/checkLogin", (req, res) => {
             endHtml()
         );
       }
-      req.session.user = rows[0];
+      const user = rows[0];
+      if (!bcrypt.compareSync(password, user.password)) {
+        return res.send(
+          style("Invalid Login") +
+            `<div class="row justify-content-center mt-5">
+               <div class="col-md-5">
+                 <div class="glass-card text-center">
+                   <h2>Invalid Login</h2>
+                   <p class="mt-3">Please check your email and password.</p>
+                   <a href="/login" class="btn btn-outline-light mt-2">Try Again</a>
+                 </div>
+               </div>
+             </div>` +
+            endHtml()
+        );
+      }
+      req.session.user = user;
+      req.session.user.password = undefined;
       res.redirect("/dashboard");
     }
   );
@@ -355,9 +393,10 @@ app.get("/register", (req, res) => {
 
 app.post("/createUser", (req, res) => {
   const { name, email, password } = req.body;
+  const hashed = bcrypt.hashSync(password, 10);
   db.query(
     "INSERT INTO users (name,email,password,role) VALUES (?,?,?, 'student')",
-    [name, email, password],
+    [name, email, hashed],
     (err) => {
       if (err) {
         return res.send(
@@ -424,8 +463,8 @@ app.get("/admin-login", (req, res) => {
 app.post("/checkAdmin", (req, res) => {
   const { email, password } = req.body;
   db.query(
-    "SELECT * FROM users WHERE email=? AND password=? AND role='admin'",
-    [email, password],
+    "SELECT * FROM users WHERE email=? AND role='admin'",
+    [email],
     (err, rows) => {
       if (err || rows.length === 0) {
         return res.send(
@@ -441,7 +480,23 @@ app.post("/checkAdmin", (req, res) => {
             endHtml()
         );
       }
-      req.session.user = rows[0];
+      const user = rows[0];
+      if (!bcrypt.compareSync(password, user.password)) {
+        return res.send(
+          style("Admin Login Error") +
+            `<div class="row justify-content-center mt-5">
+               <div class="col-md-5">
+                 <div class="glass-card text-center">
+                   <h2>Invalid Admin Login</h2>
+                   <a href="/admin-login" class="btn btn-outline-light mt-3">Try Again</a>
+                 </div>
+               </div>
+             </div>` +
+            endHtml()
+        );
+      }
+      req.session.user = user;
+      req.session.user.password = undefined;
       res.redirect("/admin");
     }
   );
@@ -849,7 +904,6 @@ app.get("/logout", (req, res) => {
 });
 
 // ---------------- START SERVER ----------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
-});
+const Port = process.env.PORT || 3000;
+app.listen(Port, '0.0.0.0', () => console.log(`Server running on port ${Port}`));
+
