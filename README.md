@@ -19,6 +19,7 @@ Includes:
   - Add candidates  
   - View results  
   - Reset votes  
+  
 - Responsive modern UI  
 
 ---
@@ -28,3 +29,4 @@ Includes:
 ### 1️⃣ Install Packages
 ```sh
 npm install
+Testing git commit
